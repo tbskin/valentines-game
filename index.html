@@ -231,10 +231,28 @@ canvas {
   transform: translateY(3px);
   box-shadow: none;
 }
+
+#sound-btn {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 30;
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: rgba(0,0,0,0.3);
+  border-radius: 8px;
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 40px;
+  text-align: center;
+  padding: 0;
+}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<button id="sound-btn" onclick="toggleSound()">🔇</button>
 
 <div id="hud" class="hidden">
   <div id="heart-counter">HEARTS: 0</div>
@@ -258,38 +276,34 @@ canvas {
 </div>
 
 <script>
-// ============ AUDIO ============
-// Static WAV files served from same directory — no JS generation, zero lag.
+// ============ AUDIO (opt-in, off by default) ============
+let soundOn = false;
+let audioReady = false;
+let pools = {};
 
-// Pre-create Audio elements with file references
-function makePool(src, count) {
-  const pool = [];
-  for (let i = 0; i < count; i++) { const a = new Audio(src); a.preload = 'auto'; pool.push(a); }
-  return pool;
-}
-const pools = {
-  jump: makePool('sfx-jump.wav', 2),
-  collect: makePool('sfx-collect.wav', 2),
-  celebrate: makePool('sfx-celebrate.wav', 1)
-};
-
-// Unlock audio on first user gesture (required by iOS/mobile browsers)
-let audioUnlocked = false;
-function unlockAudio() {
-  if (audioUnlocked) return;
-  audioUnlocked = true;
+function initAudio() {
+  if (audioReady) return;
+  audioReady = true;
+  function makePool(src, count) {
+    const pool = [];
+    for (let i = 0; i < count; i++) { const a = new Audio(src); a.preload = 'auto'; pool.push(a); }
+    return pool;
+  }
+  pools = {
+    jump: makePool('sfx-jump.wav', 2),
+    collect: makePool('sfx-collect.wav', 2),
+    celebrate: makePool('sfx-celebrate.wav', 1)
+  };
+  // Unlock on iOS
   Object.values(pools).flat().forEach(a => {
     a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
   });
 }
-['touchstart','touchend','mousedown','click'].forEach(e =>
-  document.addEventListener(e, unlockAudio, { capture: true, passive: true })
-);
 
-// Playback
 const pidx = { jump: 0, collect: 0, celebrate: 0 };
 function playSound(name) {
-  const p = pools[name]; if (!p) return;
+  if (!soundOn || !audioReady || !pools[name]) return;
+  const p = pools[name];
   const a = p[pidx[name] % p.length]; pidx[name]++;
   a.currentTime = 0; a.play().catch(() => {});
 }
@@ -298,6 +312,12 @@ function sfxCollect() { playSound('collect'); }
 function sfxCelebrate() { playSound('celebrate'); }
 function startBgMusic() {}
 function stopBgMusic() {}
+
+function toggleSound() {
+  soundOn = !soundOn;
+  if (soundOn && !audioReady) initAudio();
+  document.getElementById('sound-btn').textContent = soundOn ? '🔊' : '🔇';
+}
 
 // ============ CANVAS SETUP ============
 const canvas = document.getElementById('game');
@@ -659,7 +679,7 @@ function render() {
   if (!playing && !hasEffects && (state === STATE.START || state === STATE.END)) {
     // Just draw background once, then stop
     if (!render._bgDrawn || render._bgState !== state) {
-      ctx.drawImage(getSkyCanvas(), 0, 0, 1, H, 0, 0, W, H);
+      drawBackground(0);
       drawGround();
       render._bgDrawn = true;
       render._bgState = state;
@@ -668,7 +688,7 @@ function render() {
   }
   render._bgDrawn = false;
 
-  ctx.drawImage(getSkyCanvas(), 0, 0, 1, H, 0, 0, W, H);
+  drawBackground(1/60);
   drawGround();
 
   if (playing) {
@@ -735,7 +755,7 @@ function showEndScreen() {
 }
 
 document.getElementById('start-btn').addEventListener('click', () => {
-  unlockAudio();
+  // audio disabled for mobile performance
   document.getElementById('start-screen').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
   state = STATE.PLAYING;
