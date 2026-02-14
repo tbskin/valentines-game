@@ -310,11 +310,9 @@ function resize() {
   canvas.width = W;
   canvas.height = H;
   scale = Math.min(W, H) / 400;
-  skyCacheH = 0;
-  render._bgDrawn = false;
 }
 resize();
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => { resize(); skyCacheH = 0; });
 
 // ============ GAME STATE ============
 const STATE = { START: 0, PLAYING: 1, ENDING: 2, END: 3, RESULT: 4 };
