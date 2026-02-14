@@ -6,6 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Valentine's Game</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='3' y='1' width='2' height='2' fill='%23ff6b9d'/><rect x='5' y='1' width='2' height='2' fill='%23ff6b9d'/><rect x='9' y='1' width='2' height='2' fill='%23ff6b9d'/><rect x='11' y='1' width='2' height='2' fill='%23ff6b9d'/><rect x='1' y='3' width='2' height='2' fill='%23ff6b9d'/><rect x='3' y='3' width='2' height='2' fill='%23ffb3d0'/><rect x='5' y='3' width='2' height='2' fill='%23ff6b9d'/><rect x='7' y='3' width='2' height='2' fill='%23ff6b9d'/><rect x='9' y='3' width='2' height='2' fill='%23ff6b9d'/><rect x='11' y='3' width='2' height='2' fill='%23ff6b9d'/><rect x='13' y='3' width='2' height='2' fill='%23ff6b9d'/><rect x='1' y='5' width='2' height='2' fill='%23ff6b9d'/><rect x='3' y='5' width='2' height='2' fill='%23ff6b9d'/><rect x='5' y='5' width='2' height='2' fill='%23ff6b9d'/><rect x='7' y='5' width='2' height='2' fill='%23ff6b9d'/><rect x='9' y='5' width='2' height='2' fill='%23ff6b9d'/><rect x='11' y='5' width='2' height='2' fill='%23ff6b9d'/><rect x='13' y='5' width='2' height='2' fill='%23ff6b9d'/><rect x='1' y='7' width='2' height='2' fill='%23ff6b9d'/><rect x='3' y='7' width='2' height='2' fill='%23ff6b9d'/><rect x='5' y='7' width='2' height='2' fill='%23ff6b9d'/><rect x='7' y='7' width='2' height='2' fill='%23ff6b9d'/><rect x='9' y='7' width='2' height='2' fill='%23ff6b9d'/><rect x='11' y='7' width='2' height='2' fill='%23ff6b9d'/><rect x='13' y='7' width='2' height='2' fill='%23ff6b9d'/><rect x='3' y='9' width='2' height='2' fill='%23ff6b9d'/><rect x='5' y='9' width='2' height='2' fill='%23ff6b9d'/><rect x='7' y='9' width='2' height='2' fill='%23ff6b9d'/><rect x='9' y='9' width='2' height='2' fill='%23ff6b9d'/><rect x='11' y='9' width='2' height='2' fill='%23ff6b9d'/><rect x='5' y='11' width='2' height='2' fill='%23ff6b9d'/><rect x='7' y='11' width='2' height='2' fill='%23ff6b9d'/><rect x='9' y='11' width='2' height='2' fill='%23ff6b9d'/><rect x='7' y='13' width='2' height='2' fill='%23ff6b9d'/></svg>">
 <script>window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };</script>
 <script defer src="/_vercel/insights/script.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -257,83 +258,49 @@ canvas {
 </div>
 
 <script>
-// ============ AUDIO (Web Audio API) ============
-const AudioCtx = window.AudioContext || window.webkitAudioContext;
-let audioCtx;
-function ensureAudio() {
-  if (!audioCtx) audioCtx = new AudioCtx();
+// ============ AUDIO ============
+// Static WAV files served from same directory — no JS generation, zero lag.
+
+// Pre-create Audio elements with file references
+function makePool(src, count) {
+  const pool = [];
+  for (let i = 0; i < count; i++) { const a = new Audio(src); a.preload = 'auto'; pool.push(a); }
+  return pool;
 }
+const pools = {
+  jump: makePool('sfx-jump.wav', 2),
+  collect: makePool('sfx-collect.wav', 2),
+  celebrate: makePool('sfx-celebrate.wav', 1)
+};
+const bgMusicEl = new Audio('bgm.wav');
+bgMusicEl.loop = true; bgMusicEl.volume = 0.5; bgMusicEl.preload = 'auto';
 
-function playTone(freq, duration, type = 'square', vol = 0.15) {
-  ensureAudio();
-  const o = audioCtx.createOscillator();
-  const g = audioCtx.createGain();
-  o.type = type;
-  o.frequency.value = freq;
-  g.gain.value = vol;
-  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-  o.connect(g);
-  g.connect(audioCtx.destination);
-  o.start();
-  o.stop(audioCtx.currentTime + duration);
+// Unlock audio on first user gesture (required by iOS/mobile browsers)
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  Object.values(pools).flat().forEach(a => {
+    a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
+  });
+  bgMusicEl.play().then(() => { bgMusicEl.pause(); bgMusicEl.currentTime = 0; }).catch(() => {});
 }
+['touchstart','touchend','mousedown','click'].forEach(e =>
+  document.addEventListener(e, unlockAudio, { capture: true, passive: true })
+);
 
-function sfxJump() { playTone(500, 0.12); setTimeout(() => playTone(700, 0.08), 40); }
-function sfxCollect() { playTone(880, 0.08); setTimeout(() => playTone(1100, 0.08), 60); setTimeout(() => playTone(1320, 0.12), 120); }
-function sfxCelebrate() {
-  [0,100,200,300,400].forEach((d,i) => setTimeout(() => playTone(600 + i*150, 0.15), d));
+// Playback
+const pidx = { jump: 0, collect: 0, celebrate: 0 };
+function playSound(name) {
+  const p = pools[name]; if (!p) return;
+  const a = p[pidx[name] % p.length]; pidx[name]++;
+  a.currentTime = 0; a.play().catch(() => {});
 }
-
-// ============ BACKGROUND MUSIC ============
-let bgMusicInterval = null;
-let bgMusicPlaying = false;
-
-// Simple cute chiptune melody — loops a short phrase
-const melodyNotes = [
-  // freq, duration(ms), rest(ms)
-  [523, 180, 20],  // C5
-  [587, 180, 20],  // D5
-  [659, 360, 40],  // E5
-  [587, 180, 20],  // D5
-  [523, 180, 20],  // C5
-  [440, 360, 40],  // A4
-  [494, 180, 20],  // B4
-  [523, 180, 20],  // C5
-  [587, 360, 40],  // D5
-  [523, 180, 20],  // C5
-  [494, 180, 20],  // B4
-  [440, 360, 200], // A4 (longer rest before loop)
-  [523, 180, 20],  // C5
-  [659, 180, 20],  // E5
-  [698, 360, 40],  // F5
-  [659, 180, 20],  // E5
-  [587, 180, 20],  // D5
-  [523, 360, 40],  // C5
-  [440, 180, 20],  // A4
-  [494, 180, 20],  // B4
-  [523, 540, 300],  // C5 (held, longer rest)
-];
-
-function startBgMusic() {
-  if (bgMusicPlaying) return;
-  ensureAudio();
-  bgMusicPlaying = true;
-  let noteIdx = 0;
-
-  function playNext() {
-    if (!bgMusicPlaying) return;
-    const [freq, dur, rest] = melodyNotes[noteIdx % melodyNotes.length];
-    playTone(freq, dur / 1000, 'triangle', 0.06);
-    noteIdx++;
-    bgMusicInterval = setTimeout(playNext, dur + rest);
-  }
-  playNext();
-}
-
-function stopBgMusic() {
-  bgMusicPlaying = false;
-  if (bgMusicInterval) { clearTimeout(bgMusicInterval); bgMusicInterval = null; }
-}
+function sfxJump() { playSound('jump'); }
+function sfxCollect() { playSound('collect'); }
+function sfxCelebrate() { playSound('celebrate'); }
+function startBgMusic() { bgMusicEl.currentTime = 0; bgMusicEl.play().catch(() => {}); }
+function stopBgMusic() { bgMusicEl.pause(); bgMusicEl.currentTime = 0; }
 
 // ============ CANVAS SETUP ============
 const canvas = document.getElementById('game');
@@ -357,6 +324,9 @@ let heartsCollected = 0;
 let totalHearts = 10;
 let gameTimer = 0;
 const GAME_DURATION = 5000;
+// Scale scroll distance to screen width so it feels right on both phone and desktop
+// Phone (~375px) -> ~750px, Desktop (~1400px) -> ~1200px
+const SCROLL_DIST = Math.max(700, Math.min(1200, W * 1.8));
 let lastTime = 0;
 
 // ============ CHARACTER ============
@@ -413,9 +383,13 @@ function initGame() {
 
 function spawnHearts() {
   hearts = [];
-  const spacing = (W * 0.8) / totalHearts;
+  // Use a fixed scroll distance so mobile and desktop feel the same pace
+  const totalScrollDist = SCROLL_DIST;
+  const startOffset = totalScrollDist * 0.08;
+  const endOffset = totalScrollDist * 0.92;
+  const spacing = (endOffset - startOffset) / totalHearts;
   for (let i = 0; i < totalHearts; i++) {
-    const baseX = player.x + 120 + i * spacing;
+    const baseX = player.x + startOffset + i * spacing;
     const tier = Math.random();
     let yPos;
     if (tier < 0.35) yPos = player.groundY - 20 * scale;
@@ -442,23 +416,37 @@ function drawPixelRect(x, y, w, h, color) {
   ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
 }
 
-function drawHeart(cx, cy, size, color) {
-  ctx.fillStyle = color;
+// Pre-render heart to an offscreen canvas (drawn once, stamped many times)
+const heartCache = {};
+function getHeartCanvas(size, color) {
+  const key = size + color;
+  if (heartCache[key]) return heartCache[key];
   const s = size / 8;
-  // pixel heart shape
+  const w = Math.ceil(s * 9), h = Math.ceil(s * 6);
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const hctx = c.getContext('2d');
+  hctx.fillStyle = color;
   const rows = [
-    [-3,-1, -2,-1, 1,-1, 2,-1],
-    [-4,0, -3,0, -2,0, -1,0, 0,0, 1,0, 2,0, 3,0],
-    [-4,1, -3,1, -2,1, -1,1, 0,1, 1,1, 2,1, 3,1],
-    [-3,2, -2,2, -1,2, 0,2, 1,2, 2,2],
-    [-2,3, -1,3, 0,3, 1,3],
-    [-1,4, 0,4]
+    [-3,-1,-2,-1,1,-1,2,-1],
+    [-4,0,-3,0,-2,0,-1,0,0,0,1,0,2,0,3,0],
+    [-4,1,-3,1,-2,1,-1,1,0,1,1,1,2,1,3,1],
+    [-3,2,-2,2,-1,2,0,2,1,2,2,2],
+    [-2,3,-1,3,0,3,1,3],
+    [-1,4,0,4]
   ];
+  const ox = 4 * s, oy = s;
   rows.forEach(row => {
-    for (let i = 0; i < row.length; i += 2) {
-      ctx.fillRect(Math.round(cx + row[i] * s), Math.round(cy + row[i+1] * s), Math.ceil(s), Math.ceil(s));
-    }
+    for (let i = 0; i < row.length; i += 2)
+      hctx.fillRect(Math.round(ox + row[i]*s), Math.round(oy + row[i+1]*s), Math.ceil(s), Math.ceil(s));
   });
+  heartCache[key] = { canvas: c, ox: ox, oy: oy };
+  return heartCache[key];
+}
+
+function drawHeart(cx, cy, size, color) {
+  const h = getHeartCanvas(size, color);
+  ctx.drawImage(h.canvas, Math.round(cx - h.ox), Math.round(cy - h.oy));
 }
 
 function drawCharacter(x, y) {
@@ -517,14 +505,26 @@ function drawGround() {
   }
 }
 
-function drawBackground(dt) {
-  // Sky gradient
-  const grad = ctx.createLinearGradient(0, 0, 0, H);
+// Cache the sky gradient as an offscreen canvas (recreated on resize)
+let skyCache = null;
+let skyCacheH = 0;
+function getSkyCanvas() {
+  if (skyCache && skyCacheH === H) return skyCache;
+  skyCache = document.createElement('canvas');
+  skyCache.width = 1; skyCache.height = H;
+  const sctx = skyCache.getContext('2d');
+  const grad = sctx.createLinearGradient(0, 0, 0, H);
   grad.addColorStop(0, '#b8d4ff');
   grad.addColorStop(0.6, '#e2eeff');
   grad.addColorStop(1, '#ffdef2');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
+  sctx.fillStyle = grad;
+  sctx.fillRect(0, 0, 1, H);
+  skyCacheH = H;
+  return skyCache;
+}
+
+function drawBackground(dt) {
+  ctx.drawImage(getSkyCanvas(), 0, 0, 1, H, 0, 0, W, H);
 
   // Clouds
   clouds.forEach(c => {
@@ -587,7 +587,7 @@ function update(dt) {
     gameTimer += dt * 1000;
 
     // Move world
-    const speed = (W * 0.8 / (GAME_DURATION / 1000)) * dt;
+    const speed = (SCROLL_DIST / (GAME_DURATION / 1000)) * dt;
     groundOffset -= speed;
 
     // Move hearts toward player
@@ -654,19 +654,32 @@ function update(dt) {
 
 // ============ RENDER ============
 function render() {
-  ctx.clearRect(0, 0, W, H);
-  drawBackground(1/60);
+  // Only draw background on start/end screens (skip game objects)
+  const playing = state === STATE.PLAYING || state === STATE.ENDING;
+  const hasEffects = particles.length > 0 || confetti.length > 0;
+
+  // Skip rendering entirely if nothing is animating on static screens
+  if (!playing && !hasEffects && (state === STATE.START || state === STATE.END)) {
+    // Just draw background once, then stop
+    if (!render._bgDrawn || render._bgState !== state) {
+      ctx.drawImage(getSkyCanvas(), 0, 0, 1, H, 0, 0, W, H);
+      drawGround();
+      render._bgDrawn = true;
+      render._bgState = state;
+    }
+    return;
+  }
+  render._bgDrawn = false;
+
+  ctx.drawImage(getSkyCanvas(), 0, 0, 1, H, 0, 0, W, H);
   drawGround();
 
-  if (state === STATE.PLAYING || state === STATE.ENDING) {
+  if (playing) {
     // Draw hearts
     hearts.forEach(h => {
       if (!h.alive) return;
       const bobY = h.y + Math.sin(performance.now() * 0.004 + h.bobOffset) * 6 * scale;
       drawHeart(h.x, bobY, h.size, '#ff6b9d');
-      // Shine
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.fillRect(Math.round(h.x - h.size*0.15), Math.round(bobY - h.size*0.3), h.size*0.2, h.size*0.15);
     });
 
     // Draw character
@@ -674,23 +687,22 @@ function render() {
   }
 
   // Particles
-  particles.forEach(p => {
-    const alpha = p.life / p.maxLife;
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = p.color;
-    ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
-  });
-  ctx.globalAlpha = 1;
+  if (particles.length > 0) {
+    particles.forEach(p => {
+      ctx.globalAlpha = p.life / p.maxLife;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x | 0, p.y | 0, p.size, p.size);
+    });
+    ctx.globalAlpha = 1;
+  }
 
-  // Confetti
-  confetti.forEach(c => {
-    ctx.save();
-    ctx.translate(c.x, c.y);
-    ctx.rotate(c.rot);
-    ctx.fillStyle = c.color;
-    ctx.fillRect(-c.size/2, -c.size/4, c.size, c.size/2);
-    ctx.restore();
-  });
+  // Confetti — batch by color to reduce state changes
+  if (confetti.length > 0) {
+    confetti.forEach(c => {
+      ctx.fillStyle = c.color;
+      ctx.fillRect((c.x - c.size/2) | 0, (c.y - c.size/4) | 0, c.size, c.size/2);
+    });
+  }
 }
 
 // ============ GAME LOOP ============
@@ -726,7 +738,7 @@ function showEndScreen() {
 }
 
 document.getElementById('start-btn').addEventListener('click', () => {
-  ensureAudio();
+  unlockAudio();
   document.getElementById('start-screen').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
   state = STATE.PLAYING;
