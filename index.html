@@ -272,8 +272,6 @@ const pools = {
   collect: makePool('sfx-collect.wav', 2),
   celebrate: makePool('sfx-celebrate.wav', 1)
 };
-const bgMusicEl = new Audio('bgm.wav');
-bgMusicEl.loop = true; bgMusicEl.volume = 0.5; bgMusicEl.preload = 'auto';
 
 // Unlock audio on first user gesture (required by iOS/mobile browsers)
 let audioUnlocked = false;
@@ -283,7 +281,6 @@ function unlockAudio() {
   Object.values(pools).flat().forEach(a => {
     a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
   });
-  bgMusicEl.play().then(() => { bgMusicEl.pause(); bgMusicEl.currentTime = 0; }).catch(() => {});
 }
 ['touchstart','touchend','mousedown','click'].forEach(e =>
   document.addEventListener(e, unlockAudio, { capture: true, passive: true })
@@ -299,27 +296,20 @@ function playSound(name) {
 function sfxJump() { playSound('jump'); }
 function sfxCollect() { playSound('collect'); }
 function sfxCelebrate() { playSound('celebrate'); }
-function startBgMusic() { bgMusicEl.currentTime = 0; bgMusicEl.play().catch(() => {}); }
-function stopBgMusic() { bgMusicEl.pause(); bgMusicEl.currentTime = 0; }
+function startBgMusic() {}
+function stopBgMusic() {}
 
 // ============ CANVAS SETUP ============
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 let W, H, scale;
-// Render at half resolution for performance — pixel art looks great scaled up
-const RES = 0.5;
 
 function resize() {
-  const sw = window.innerWidth;
-  const sh = window.innerHeight;
-  canvas.style.width = sw + 'px';
-  canvas.style.height = sh + 'px';
-  W = Math.round(sw * RES);
-  H = Math.round(sh * RES);
+  W = window.innerWidth;
+  H = window.innerHeight;
   canvas.width = W;
   canvas.height = H;
   scale = Math.min(W, H) / 400;
-  // Reset sky cache on resize
   skyCacheH = 0;
   render._bgDrawn = false;
 }
@@ -335,8 +325,7 @@ let gameTimer = 0;
 const GAME_DURATION = 5000;
 // Scale scroll distance to screen width so it feels right on both phone and desktop
 // Phone (~375px) -> ~750px, Desktop (~1400px) -> ~1200px
-// Use actual screen width (W is half-res canvas)
-const SCROLL_DIST = Math.max(350, Math.min(600, window.innerWidth * 0.9 * RES));
+const SCROLL_DIST = Math.max(700, Math.min(1200, W * 1.8));
 let lastTime = 0;
 
 // ============ CHARACTER ============
@@ -788,11 +777,10 @@ function dodgeNo(e) {
   void yesBtn.offsetHeight; // reflow
   yesBtn.style.animation = 'yesPulse 0.6s ease-in-out infinite';
 
-  // Teleport to a random spot, keeping it on screen (use screen dims, not canvas dims)
+  // Teleport to a random spot, keeping it on screen
   const pad = 30;
-  const sw = window.innerWidth, sh = window.innerHeight;
-  const nx = pad + Math.random() * (sw - pad * 2 - 60);
-  const ny = pad + Math.random() * (sh - pad * 2 - 30);
+  const nx = pad + Math.random() * (W - pad * 2 - 60);
+  const ny = pad + Math.random() * (H - pad * 2 - 30);
   noBtn.style.position = 'fixed';
   noBtn.style.left = nx + 'px';
   noBtn.style.top = ny + 'px';
