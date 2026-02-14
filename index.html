@@ -239,10 +239,9 @@ canvas {
   z-index: 30;
   width: 40px;
   height: 40px;
-  border: 2px solid #ffffff;
-  background: #ff6b9d;
+  border: 2px solid #fff;
+  background: rgba(255,107,157,0.92);
   box-shadow: 0 3px 0 #c0507a;
-  color: #ffffff;
   cursor: pointer;
   padding: 0;
   display: flex;
@@ -255,31 +254,21 @@ canvas {
   height: 20px;
 }
 
-#sound-btn svg .speaker {
-  fill: #fff;
-}
-
-#sound-btn svg .wave {
+#sound-btn .spk { fill: #fff; }
+#sound-btn .wave {
   fill: none;
   stroke: #fff;
   stroke-width: 2;
   stroke-linecap: square;
 }
-
-#sound-btn svg .mute-slash {
+#sound-btn .mute {
   display: none;
   stroke: #fff;
   stroke-width: 2.5;
   stroke-linecap: square;
 }
-
-#sound-btn.is-off svg .wave {
-  opacity: 0;
-}
-
-#sound-btn.is-off svg .mute-slash {
-  display: block;
-}
+#sound-btn.is-off .wave { opacity: 0; }
+#sound-btn.is-off .mute { display: block; }
 
 #sound-btn:active {
   transform: translateY(3px);
@@ -290,31 +279,74 @@ canvas {
   position: fixed;
   right: 10px;
   bottom: 8px;
-  z-index: 5;
+  z-index: 12;
   pointer-events: none;
   font-family: 'Press Start 2P', monospace;
   font-size: clamp(7px, 1.9vw, 10px);
-  color: rgba(255, 245, 230, 0.9);
-  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
-  letter-spacing: 0.5px;
-  white-space: nowrap;
-  background: rgba(0, 0, 0, 0.2);
+  color: rgba(255, 245, 230, 0.95);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   padding: 3px 5px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+#audio-diag {
+  position: fixed;
+  left: 8px;
+  top: 8px;
+  z-index: 60;
+  pointer-events: none;
+  margin: 0;
+  padding: 6px 7px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 7px;
+  line-height: 1.45;
+  color: #d7ffe6;
+  background: rgba(0, 0, 0, 0.62);
+  border: 1px solid rgba(146, 255, 199, 0.45);
+  white-space: pre;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
+}
+
+#audio-debug-controls {
+  position: fixed;
+  left: 8px;
+  top: 96px;
+  z-index: 61;
+  pointer-events: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.diag-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px;
+  border: 1px solid rgba(255,255,255,0.6);
+  color: #fff;
+  background: rgba(0,0,0,0.55);
+  padding: 5px 7px;
+  cursor: pointer;
 }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
-<div id="maker-credit">crafted with love by Jayanth Putta</div>
+<div id="maker-credit">made with love by Jayanth Putta</div>
 <button id="sound-btn" onclick="toggleSound()" aria-label="Sound on" title="Sound on">
   <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path class="speaker" d="M3 10v4h4l5 4V6l-5 4H3z"></path>
+    <path class="spk" d="M3 10v4h4l5 4V6l-5 4H3z"></path>
     <path class="wave" d="M16 9c1.5 1 1.5 5 0 6"></path>
     <path class="wave" d="M19 7c2.6 2 2.6 8 0 10"></path>
-    <line class="mute-slash" x1="4" y1="4" x2="20" y2="20"></line>
+    <line class="mute" x1="4" y1="4" x2="20" y2="20"></line>
   </svg>
 </button>
+<pre id="audio-diag"></pre>
+<div id="audio-debug-controls">
+  <button id="audio-beep-btn" class="diag-btn" type="button">BEEP</button>
+  <button id="audio-hide-diag-btn" class="diag-btn" type="button">HIDE</button>
+</div>
 
 <div id="hud" class="hidden">
   <div id="heart-counter">HEARTS: 0</div>
@@ -344,14 +376,21 @@ let audioReady = false;
 let audioCtx = null;
 let masterGain = null;
 let audioLoading = null;
+let audioUnlocked = false;
+let audioPriming = null;
+let outputRoutePrimed = false;
+let bgAudioEl = null;
+let bgPlayPromise = null;
+let bgmWanted = false;
+const AUDIO_DIAG_ENABLED = true; // temporary debug overlay
+let audioDiagLast = 'boot';
+let audioDiagErr = '';
+let audioDiagGestureCount = 0;
+let audioDiagHidden = false;
 const audioBuffers = {};
 const lastPlayAt = { jump: 0, collect: 0, celebrate: 0 };
-const USE_SYNTH_SFX = true;
 const BGM_FILE = 'bgm.wav';
-let bgBuffer = null;
-let bgSource = null;
-let bgGain = null;
-let bgLoading = null;
+const BGM_VOLUME_ON = 0.68;
 const SFX_FILES = {
   jump: 'sfx-jump.wav',
   collect: 'sfx-collect.wav',
@@ -370,6 +409,45 @@ function decodeAudioCompat(ctx, arrayBuffer) {
   });
 }
 
+function setAudioDiag(status, err) {
+  audioDiagLast = status;
+  if (err) audioDiagErr = String(err && err.message ? err.message : err);
+}
+
+function getBgmState() {
+  if (!bgAudioEl) return 'empty';
+  if (bgPlayPromise) return 'starting';
+  if (!bgAudioEl.paused) return 'playing';
+  if (bgAudioEl.readyState >= 3) return 'ready';
+  return 'loading';
+}
+
+function renderAudioDiag() {
+  if (!AUDIO_DIAG_ENABLED) return;
+  const panel = document.getElementById('audio-diag');
+  const controls = document.getElementById('audio-debug-controls');
+  if (!panel) return;
+  if (audioDiagHidden) {
+    panel.style.display = 'none';
+    if (controls) controls.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+  if (controls) controls.style.display = 'flex';
+  const ctxState = audioCtx ? audioCtx.state : 'none';
+  const bgState = getBgmState();
+  const mg = masterGain ? masterGain.gain.value.toFixed(2) : '-';
+  const bgVol = bgAudioEl ? bgAudioEl.volume.toFixed(2) : '-';
+  panel.textContent =
+`audio:${soundOn ? 'on' : 'off'}  ctx:${ctxState}
+unlock:${audioUnlocked ? 'yes' : 'no'}  ready:${audioReady ? 'yes' : 'no'}
+bgm:${bgState}  want:${bgmWanted ? 'yes' : 'no'}
+gain:${mg}  bgvol:${bgVol}
+gestures:${audioDiagGestureCount}
+last:${audioDiagLast}
+err:${audioDiagErr || '-'}`;
+}
+
 function ensureAudioGraph() {
   if (audioCtx) return;
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -378,33 +456,137 @@ function ensureAudioGraph() {
   masterGain = audioCtx.createGain();
   masterGain.gain.value = soundOn ? 1 : 0;
   masterGain.connect(audioCtx.destination);
+  setAudioDiag('graph-created');
+  renderAudioDiag();
 }
 
-function midiToFreq(midi) {
-  return 440 * Math.pow(2, (midi - 69) / 12);
+function ensureBgAudio() {
+  if (bgAudioEl) return bgAudioEl;
+  const el = new Audio(BGM_FILE);
+  el.preload = 'auto';
+  el.loop = true;
+  el.playsInline = true;
+  el.volume = soundOn ? BGM_VOLUME_ON : 0;
+  el.addEventListener('playing', () => {
+    setAudioDiag('bg-playing');
+    renderAudioDiag();
+  });
+  el.addEventListener('pause', () => {
+    setAudioDiag(bgmWanted ? 'bg-paused' : 'bg-stopped');
+    renderAudioDiag();
+  });
+  el.addEventListener('error', () => {
+    const code = el.error ? el.error.code : 'unknown';
+    setAudioDiag('bg-error', 'code ' + code);
+    renderAudioDiag();
+  });
+  el.load();
+  bgAudioEl = el;
+  setAudioDiag('bg-created');
+  renderAudioDiag();
+  return bgAudioEl;
 }
 
-function pulseWave(freq, t, duty) {
-  return ((t * freq) % 1) < duty ? 1 : -1;
+async function ensureAudioUnlocked() {
+  ensureAudioGraph();
+  if (!audioCtx) { setAudioDiag('no-audio-context'); renderAudioDiag(); return false; }
+  if (audioCtx.state !== 'running') {
+    setAudioDiag('resume-attempt');
+    try { await audioCtx.resume(); } catch (e) { setAudioDiag('resume-failed', e); renderAudioDiag(); }
+  }
+  if (audioCtx.state !== 'running') { setAudioDiag('resume-not-running'); renderAudioDiag(); return false; }
+  if (masterGain) masterGain.gain.setValueAtTime(soundOn ? 1 : 0, audioCtx.currentTime);
+  if (!audioUnlocked && masterGain) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0.0001;
+    osc.connect(gain);
+    gain.connect(masterGain);
+    const t0 = audioCtx.currentTime;
+    osc.start(t0);
+    osc.stop(t0 + 0.01);
+    audioUnlocked = true;
+    setAudioDiag('unlock-tick');
+    renderAudioDiag();
+  }
+  setAudioDiag('unlocked');
+  renderAudioDiag();
+  return true;
 }
 
-function triWave(freq, t) {
-  const p = (t * freq) % 1;
-  return 4 * Math.abs(p - 0.5) - 1;
+function ensureSfxLoading() {
+  if (audioReady || audioLoading) return;
+  initAudio().catch(() => {});
+}
+
+async function startBgMusic(reason = 'bg-start') {
+  bgmWanted = true;
+  if (!soundOn) {
+    setAudioDiag('bg-muted');
+    renderAudioDiag();
+    return false;
+  }
+  const bg = ensureBgAudio();
+  bg.volume = BGM_VOLUME_ON;
+  if (!bg.paused && !bg.ended) {
+    setAudioDiag('bg-playing');
+    renderAudioDiag();
+    return true;
+  }
+  if (bgPlayPromise) return bgPlayPromise;
+  setAudioDiag(reason);
+  renderAudioDiag();
+  try {
+    const p = bg.play();
+    if (p && typeof p.then === 'function') {
+      bgPlayPromise = p.then(() => {
+        setAudioDiag('bg-playing');
+        renderAudioDiag();
+        return true;
+      }).catch((e) => {
+        setAudioDiag('bg-play-fail', e);
+        renderAudioDiag();
+        return false;
+      }).finally(() => {
+        bgPlayPromise = null;
+      });
+      return bgPlayPromise;
+    }
+    setAudioDiag('bg-playing');
+    renderAudioDiag();
+    return true;
+  } catch (e) {
+    setAudioDiag('bg-play-throw', e);
+    renderAudioDiag();
+    return false;
+  }
+}
+
+function stopBgMusic(reset = true) {
+  bgmWanted = false;
+  if (bgPlayPromise) bgPlayPromise = null;
+  if (!bgAudioEl) {
+    setAudioDiag('bg-stopped');
+    renderAudioDiag();
+    return;
+  }
+  try { bgAudioEl.pause(); } catch (_) {}
+  if (reset) {
+    try { bgAudioEl.currentTime = 0; } catch (_) {}
+  }
+  setAudioDiag(reset ? 'bg-stopped' : 'bg-paused');
+  renderAudioDiag();
 }
 
 async function initAudio() {
   if (audioReady) return true;
   if (audioLoading) return audioLoading;
+  setAudioDiag('init-audio');
+  renderAudioDiag();
   audioLoading = (async () => {
     ensureAudioGraph();
-    if (!audioCtx) return false;
-    try { if (audioCtx.state !== 'running') await audioCtx.resume(); } catch (_) {}
-    if (USE_SYNTH_SFX) {
-      audioReady = true;
-      loadBgBuffer();
-      return true;
-    }
+    if (!audioCtx) { setAudioDiag('init-no-context'); renderAudioDiag(); return false; }
+    if (audioCtx.state !== 'running') { setAudioDiag('init-context-not-running'); renderAudioDiag(); return false; }
     const entries = await Promise.all(Object.entries(SFX_FILES).map(async ([name, src]) => {
       try {
         const res = await fetch(src, { cache: 'force-cache' });
@@ -418,9 +600,10 @@ async function initAudio() {
     }));
     entries.forEach(([name, buffer]) => { audioBuffers[name] = buffer; });
     audioReady = Object.values(audioBuffers).some(Boolean);
-    loadBgBuffer();
+    setAudioDiag(audioReady ? 'sfx-ready' : 'sfx-missing');
+    renderAudioDiag();
     return audioReady;
-  })().finally(() => { audioLoading = null; });
+  })().finally(() => { audioLoading = null; renderAudioDiag(); });
   return audioLoading;
 }
 
@@ -432,83 +615,66 @@ function canPlayNow(name) {
   return true;
 }
 
-function scheduleTone(type, freqStart, freqEnd, startOffset, duration, amp) {
-  if (!audioCtx || !masterGain) return;
-  const tStart = audioCtx.currentTime + startOffset;
-  const tEnd = tStart + duration;
+function playSynth(name) {
+  if (!audioCtx || !masterGain || audioCtx.state !== 'running') return;
+  const t0 = audioCtx.currentTime;
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
-  osc.type = type;
-  osc.frequency.setValueAtTime(Math.max(1, freqStart), tStart);
-  if (freqEnd && Math.abs(freqEnd - freqStart) > 0.01) {
-    osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), tEnd);
-  }
-  gain.gain.setValueAtTime(0.0001, tStart);
-  gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, amp), tStart + Math.min(0.012, duration * 0.3));
-  gain.gain.exponentialRampToValueAtTime(0.0001, tEnd);
   osc.connect(gain);
   gain.connect(masterGain);
-  osc.onended = () => {
-    osc.disconnect();
-    gain.disconnect();
-  };
-  osc.start(tStart);
-  osc.stop(tEnd + 0.01);
-}
-
-function playSynth(name) {
-  ensureAudioGraph();
-  if (!audioCtx || !masterGain) return;
-  if (audioCtx.state !== 'running') {
-    audioCtx.resume().then(() => {
-      if (soundOn) playSynth(name);
-    }).catch(() => {});
-    return;
-  }
   if (name === 'jump') {
-    scheduleTone('square', 560, 280, 0.0, 0.14, 0.11);
-    scheduleTone('triangle', 860, 430, 0.0, 0.11, 0.06);
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(420, t0);
+    osc.frequency.exponentialRampToValueAtTime(250, t0 + 0.11);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+    osc.start(t0);
+    osc.stop(t0 + 0.13);
   } else if (name === 'collect') {
-    scheduleTone('square', 1046, 1046, 0.0, 0.065, 0.11);
-    scheduleTone('triangle', 1318, 1318, 0.055, 0.09, 0.13);
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(620, t0);
+    osc.frequency.exponentialRampToValueAtTime(980, t0 + 0.09);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.22, t0 + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.11);
+    osc.start(t0);
+    osc.stop(t0 + 0.12);
   } else {
-    scheduleTone('square', 784, 784, 0.0, 0.12, 0.11);
-    scheduleTone('square', 988, 988, 0.08, 0.12, 0.11);
-    scheduleTone('triangle', 1174, 1174, 0.16, 0.14, 0.13);
-    scheduleTone('triangle', 1568, 1568, 0.28, 0.22, 0.12);
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(740, t0);
+    osc.frequency.setValueAtTime(980, t0 + 0.08);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.2, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+    osc.start(t0);
+    osc.stop(t0 + 0.22);
   }
 }
 
 function playSound(name) {
-  if (!soundOn) return;
-  if (USE_SYNTH_SFX) {
-    if (!canPlayNow(name)) return;
-    playSynth(name);
-    return;
-  }
-  if (!audioReady) {
-    initAudio();
-    if (!canPlayNow(name)) return;
-    playSynth(name);
-    return;
-  }
-  const buffer = audioBuffers[name];
-  if (!buffer || !audioCtx || !masterGain) {
-    if (!canPlayNow(name)) return;
-    playSynth(name);
+  if (!soundOn || !canPlayNow(name)) return;
+  if (!audioCtx || !masterGain) {
+    primeAudioFromGesture();
     return;
   }
   if (audioCtx.state !== 'running') {
+    setAudioDiag('play-resume-' + name);
+    renderAudioDiag();
     audioCtx.resume().then(() => {
       if (soundOn) playSound(name);
     }).catch(() => {});
     return;
   }
-  if (!canPlayNow(name)) return;
+  const buffer = audioBuffers[name];
+  if (!audioReady || !buffer) {
+    playSynth(name);
+    return;
+  }
   const source = audioCtx.createBufferSource();
   source.buffer = buffer;
   const gain = audioCtx.createGain();
-  gain.gain.value = name === 'celebrate' ? 0.9 : 0.75;
+  gain.gain.value = name === 'celebrate' ? 1 : 0.95;
   source.connect(gain);
   gain.connect(masterGain);
   source.start(0);
@@ -517,126 +683,66 @@ function sfxJump() { playSound('jump'); }
 function sfxCollect() { playSound('collect'); }
 function sfxCelebrate() { playSound('celebrate'); }
 
-function buildFallbackBgBuffer() {
-  ensureAudioGraph();
-  if (!audioCtx || bgBuffer) return;
-  const sampleRate = audioCtx.sampleRate;
-  const duration = 8;
-  const frameCount = Math.floor(sampleRate * duration);
-  const buffer = audioCtx.createBuffer(2, frameCount, sampleRate);
-  const left = buffer.getChannelData(0);
-  const right = buffer.getChannelData(1);
-  const chordRoots = [60, 57, 53, 55]; // C, Am, F, G
-  const arp = [0, 4, 7, 12, 7, 4, 2, 4];
-  const bassStep = [0, 0, 7, 0, 0, 0, 5, 0];
-  const stepSec = 0.25;
-  let noiseState = 2463534242 >>> 0;
-  let prevL = 0;
-  let prevR = 0;
-  for (let i = 0; i < frameCount; i++) {
-    const t = i / sampleRate;
-    const step = Math.floor(t / stepSec);
-    const chordIdx = Math.floor(step / 8) % chordRoots.length;
-    const stepInChord = step % 8;
-    const local = (t - step * stepSec) / stepSec;
-    const leadFreq = midiToFreq(chordRoots[chordIdx] + arp[stepInChord] + 12);
-    const bassFreq = midiToFreq(chordRoots[chordIdx] - 12 + bassStep[stepInChord]);
-    const padFreq = midiToFreq(chordRoots[chordIdx] + 7);
-    const envLead = Math.pow(1 - local, 1.8);
-    const envBass = Math.pow(1 - local, 2.4);
-    const lead = (pulseWave(leadFreq, t, 0.24) * 0.08 + pulseWave(leadFreq * 2, t, 0.14) * 0.025) * envLead;
-    const bass = triWave(bassFreq, t) * 0.07 * envBass;
-    const pad = Math.sin(2 * Math.PI * padFreq * t) * 0.02;
-    let hat = 0;
-    if ((step % 2) === 1 && local < 0.07) {
-      noiseState = (noiseState * 1664525 + 1013904223) >>> 0;
-      const noise = (noiseState / 4294967295) * 2 - 1;
-      hat = noise * (1 - local / 0.07) * 0.015;
-    }
-    let l = lead + bass + pad + hat;
-    let r = lead * 0.9 + bass * 1.05 + pad - hat * 0.55;
-    l = l * 0.86 + prevL * 0.14;
-    r = r * 0.86 + prevR * 0.14;
-    prevL = l;
-    prevR = r;
-    left[i] = Math.max(-1, Math.min(1, l));
-    right[i] = Math.max(-1, Math.min(1, r));
-  }
-  const crossfade = Math.min(2048, Math.floor(frameCount / 12));
-  for (let i = 0; i < crossfade; i++) {
-    const a = i / crossfade;
-    left[i] = left[i] * a + left[frameCount - crossfade + i] * (1 - a);
-    right[i] = right[i] * a + right[frameCount - crossfade + i] * (1 - a);
-  }
-  bgBuffer = buffer;
-}
+async function primeAudioFromGesture() {
+  if (!soundOn) return false;
+  if (audioPriming) return audioPriming;
+  audioPriming = (async () => {
+    audioDiagGestureCount++;
+    setAudioDiag('gesture');
+    renderAudioDiag();
+    const ok = await ensureAudioUnlocked().catch(() => false);
+    if (!ok) return false;
 
-async function loadBgBuffer() {
-  if (bgBuffer) return bgBuffer;
-  if (bgLoading) return bgLoading;
-  bgLoading = (async () => {
-    ensureAudioGraph();
-    if (!audioCtx) return null;
-    try {
-      const res = await fetch(BGM_FILE, { cache: 'force-cache' });
-      if (res.ok) {
-        const arrayBuffer = await res.arrayBuffer();
-        const decoded = await decodeAudioCompat(audioCtx, arrayBuffer);
-        if (decoded) {
-          bgBuffer = decoded;
-          return bgBuffer;
-        }
+    // Some mobile browsers need one tiny non-zero sample to fully open the audio route.
+    if (!outputRoutePrimed && audioCtx && masterGain && audioCtx.state === 'running') {
+      try {
+        const t0 = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(660, t0);
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.exponentialRampToValueAtTime(0.03, t0 + 0.005);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.05);
+        osc.connect(gain);
+        gain.connect(masterGain);
+        osc.start(t0);
+        osc.stop(t0 + 0.055);
+        outputRoutePrimed = true;
+        setAudioDiag('route-primed');
+        renderAudioDiag();
+      } catch (e) {
+        setAudioDiag('route-prime-fail', e);
+        renderAudioDiag();
       }
-    } catch (_) {}
-    buildFallbackBgBuffer();
-    return bgBuffer;
-  })().finally(() => { bgLoading = null; });
-  return bgLoading;
+    }
+    ensureSfxLoading();
+    ensureBgAudio();
+    if (typeof STATE !== 'undefined' && (state === STATE.PLAYING || bgmWanted)) {
+      await startBgMusic('bg-play-gesture');
+    }
+    setAudioDiag('primed');
+    renderAudioDiag();
+    return true;
+  })().finally(() => {
+    audioPriming = null;
+    renderAudioDiag();
+  });
+  return audioPriming;
 }
 
-function startBgMusic() {
-  if (!soundOn) return;
-  ensureAudioGraph();
-  if (!audioCtx || !masterGain) return;
-  if (typeof STATE !== 'undefined' && state !== STATE.PLAYING) return;
-  if (bgSource) return;
-  if (audioCtx.state !== 'running') {
-    audioCtx.resume().then(() => {
-      if (soundOn) startBgMusic();
-    }).catch(() => {});
-    return;
+async function playDebugBeep() {
+  if (!soundOn) {
+    soundOn = true;
+    updateSoundButton();
   }
-  if (!bgBuffer) {
-    loadBgBuffer().then(() => {
-      if (soundOn) startBgMusic();
-    }).catch(() => {});
-    return;
+  await primeAudioFromGesture();
+  sfxCollect();
+  if (typeof STATE !== 'undefined' && state === STATE.PLAYING) {
+    startBgMusic('bg-play-debug');
   }
-  const source = audioCtx.createBufferSource();
-  source.buffer = bgBuffer;
-  source.loop = true;
-  const gain = audioCtx.createGain();
-  gain.gain.value = 0.14;
-  source.connect(gain);
-  gain.connect(masterGain);
-  source.onended = () => {
-    if (bgSource === source) bgSource = null;
-  };
-  source.start(0);
-  bgSource = source;
-  bgGain = gain;
-}
-
-function stopBgMusic() {
-  if (bgSource) {
-    try { bgSource.stop(); } catch (_) {}
-    bgSource.disconnect();
-    bgSource = null;
-  }
-  if (bgGain) {
-    bgGain.disconnect();
-    bgGain = null;
-  }
+  setAudioDiag('debug-beep');
+  renderAudioDiag();
 }
 
 function updateSoundButton() {
@@ -650,30 +756,43 @@ function updateSoundButton() {
 
 function toggleSound() {
   soundOn = !soundOn;
+  ensureBgAudio();
   if (soundOn) {
-    initAudio();
-    if (typeof STATE !== 'undefined' && state === STATE.PLAYING) startBgMusic();
+    primeAudioFromGesture();
+    if (state === STATE.PLAYING) startBgMusic('bg-play-toggle');
   } else {
-    stopBgMusic();
+    stopBgMusic(false);
   }
   if (masterGain && audioCtx) {
     const target = soundOn ? 1 : 0;
     masterGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.01);
   }
+  if (bgAudioEl) bgAudioEl.volume = soundOn ? BGM_VOLUME_ON : 0;
   updateSoundButton();
+  renderAudioDiag();
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (!soundOn || !audioCtx) return;
-  if (document.visibilityState === 'visible' && audioCtx.state !== 'running') {
-    audioCtx.resume().then(() => {
-      if (typeof STATE !== 'undefined' && state === STATE.PLAYING) startBgMusic();
-    }).catch(() => {});
+  if (document.visibilityState === 'visible') {
+    if (soundOn && state === STATE.PLAYING) {
+      bgmWanted = true;
+      primeAudioFromGesture();
+      startBgMusic('bg-play-visible');
+    }
+    return;
   }
+  if (bgAudioEl && !bgAudioEl.paused) bgAudioEl.pause();
+  setAudioDiag('bg-hidden');
+  renderAudioDiag();
 });
-
-if (soundOn) initAudio();
 updateSoundButton();
+renderAudioDiag();
+setInterval(renderAudioDiag, 400);
+document.getElementById('audio-beep-btn').addEventListener('click', playDebugBeep);
+document.getElementById('audio-hide-diag-btn').addEventListener('click', () => {
+  audioDiagHidden = true;
+  renderAudioDiag();
+});
 
 // ============ CANVAS SETUP ============
 const canvas = document.getElementById('game');
@@ -1027,22 +1146,7 @@ function update(dt) {
 
 // ============ RENDER ============
 function render() {
-  // Only draw background on start/end screens (skip game objects)
   const playing = state === STATE.PLAYING || state === STATE.ENDING;
-  const hasEffects = particles.length > 0 || confetti.length > 0;
-
-  // Skip rendering entirely if nothing is animating on static screens
-  if (!playing && !hasEffects && (state === STATE.START || state === STATE.END)) {
-    // Just draw background once, then stop
-    if (!render._bgDrawn || render._bgState !== state) {
-      drawBackground(0);
-      drawGround();
-      render._bgDrawn = true;
-      render._bgState = state;
-    }
-    return;
-  }
-  render._bgDrawn = false;
 
   drawBackground(1/60);
   drawGround();
@@ -1090,6 +1194,7 @@ function loop(time) {
 // ============ INPUT ============
 function handleTap(e) {
   e.preventDefault();
+  primeAudioFromGesture();
   if (state === STATE.PLAYING && !player.jumping) {
     player.jumping = true;
     player.vy = -550 * scale;
@@ -1097,7 +1202,11 @@ function handleTap(e) {
   }
 }
 
-canvas.addEventListener('pointerdown', handleTap);
+if (window.PointerEvent) {
+  canvas.addEventListener('pointerdown', handleTap);
+} else {
+  canvas.addEventListener('touchstart', handleTap, { passive: false });
+}
 
 // ============ SCREENS ============
 function showEndScreen() {
@@ -1110,17 +1219,19 @@ function showEndScreen() {
   endScreen.querySelector('.hearts-result').textContent = `You collected ${heartsCollected} hearts!`;
 }
 
-document.getElementById('start-btn').addEventListener('click', () => {
-  // Start gameplay; audio remains opt-in via sound toggle
-  if (soundOn) initAudio();
+document.getElementById('start-btn').addEventListener('click', (e) => {
+  e.preventDefault();
   document.getElementById('start-screen').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
   state = STATE.PLAYING;
   initGame();
-  startBgMusic();
+  bgmWanted = true;
+  primeAudioFromGesture();
+  startBgMusic('bg-play-start');
 });
 
 document.getElementById('yes-btn').addEventListener('click', () => {
+  primeAudioFromGesture();
   sfxCelebrate();
   spawnConfetti();
   setTimeout(spawnConfetti, 400);
