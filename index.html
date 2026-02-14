@@ -282,53 +282,16 @@ canvas {
   z-index: 12;
   pointer-events: none;
   font-family: 'Press Start 2P', monospace;
-  font-size: clamp(7px, 1.9vw, 10px);
+  font-size: clamp(6px, 1.6vw, 9px);
   color: rgba(255, 245, 230, 0.95);
   text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.6);
   background: rgba(0, 0, 0, 0.28);
   border: 1px solid rgba(255, 255, 255, 0.2);
-  padding: 3px 5px;
+  padding: 2px 4px;
   letter-spacing: 0.4px;
   white-space: nowrap;
 }
 
-#audio-diag {
-  position: fixed;
-  left: 8px;
-  top: 8px;
-  z-index: 60;
-  pointer-events: none;
-  margin: 0;
-  padding: 6px 7px;
-  font-family: 'Press Start 2P', monospace;
-  font-size: 7px;
-  line-height: 1.45;
-  color: #d7ffe6;
-  background: rgba(0, 0, 0, 0.62);
-  border: 1px solid rgba(146, 255, 199, 0.45);
-  white-space: pre;
-  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
-}
-
-#audio-debug-controls {
-  position: fixed;
-  left: 8px;
-  top: 96px;
-  z-index: 61;
-  pointer-events: auto;
-  display: flex;
-  gap: 6px;
-}
-
-.diag-btn {
-  font-family: 'Press Start 2P', monospace;
-  font-size: 8px;
-  border: 1px solid rgba(255,255,255,0.6);
-  color: #fff;
-  background: rgba(0,0,0,0.55);
-  padding: 5px 7px;
-  cursor: pointer;
-}
 </style>
 </head>
 <body>
@@ -342,11 +305,6 @@ canvas {
     <line class="mute" x1="4" y1="4" x2="20" y2="20"></line>
   </svg>
 </button>
-<pre id="audio-diag"></pre>
-<div id="audio-debug-controls">
-  <button id="audio-beep-btn" class="diag-btn" type="button">BEEP</button>
-  <button id="audio-hide-diag-btn" class="diag-btn" type="button">HIDE</button>
-</div>
 
 <div id="hud" class="hidden">
   <div id="heart-counter">HEARTS: 0</div>
@@ -382,7 +340,7 @@ let outputRoutePrimed = false;
 let bgAudioEl = null;
 let bgPlayPromise = null;
 let bgmWanted = false;
-const AUDIO_DIAG_ENABLED = true; // temporary debug overlay
+const AUDIO_DIAG_ENABLED = false;
 let audioDiagLast = 'boot';
 let audioDiagErr = '';
 let audioDiagGestureCount = 0;
@@ -787,12 +745,6 @@ document.addEventListener('visibilitychange', () => {
 });
 updateSoundButton();
 renderAudioDiag();
-setInterval(renderAudioDiag, 400);
-document.getElementById('audio-beep-btn').addEventListener('click', playDebugBeep);
-document.getElementById('audio-hide-diag-btn').addEventListener('click', () => {
-  audioDiagHidden = true;
-  renderAudioDiag();
-});
 
 // ============ CANVAS SETUP ============
 const canvas = document.getElementById('game');
