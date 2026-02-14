@@ -284,6 +284,12 @@ let masterGain = null;
 let audioLoading = null;
 const audioBuffers = {};
 const lastPlayAt = { jump: 0, collect: 0, celebrate: 0 };
+const USE_SYNTH_SFX = true;
+const BGM_FILE = 'bgm.wav';
+let bgBuffer = null;
+let bgSource = null;
+let bgGain = null;
+let bgLoading = null;
 const SFX_FILES = {
   jump: 'sfx-jump.wav',
   collect: 'sfx-collect.wav',
@@ -312,6 +318,19 @@ function ensureAudioGraph() {
   masterGain.connect(audioCtx.destination);
 }
 
+function midiToFreq(midi) {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+function pulseWave(freq, t, duty) {
+  return ((t * freq) % 1) < duty ? 1 : -1;
+}
+
+function triWave(freq, t) {
+  const p = (t * freq) % 1;
+  return 4 * Math.abs(p - 0.5) - 1;
+}
+
 async function initAudio() {
   if (audioReady) return true;
   if (audioLoading) return audioLoading;
@@ -319,6 +338,11 @@ async function initAudio() {
     ensureAudioGraph();
     if (!audioCtx) return false;
     try { if (audioCtx.state !== 'running') await audioCtx.resume(); } catch (_) {}
+    if (USE_SYNTH_SFX) {
+      audioReady = true;
+      loadBgBuffer();
+      return true;
+    }
     const entries = await Promise.all(Object.entries(SFX_FILES).map(async ([name, src]) => {
       try {
         const res = await fetch(src, { cache: 'force-cache' });
@@ -332,6 +356,7 @@ async function initAudio() {
     }));
     entries.forEach(([name, buffer]) => { audioBuffers[name] = buffer; });
     audioReady = Object.values(audioBuffers).some(Boolean);
+    loadBgBuffer();
     return audioReady;
   })().finally(() => { audioLoading = null; });
   return audioLoading;
@@ -345,6 +370,30 @@ function canPlayNow(name) {
   return true;
 }
 
+function scheduleTone(type, freqStart, freqEnd, startOffset, duration, amp) {
+  if (!audioCtx || !masterGain) return;
+  const tStart = audioCtx.currentTime + startOffset;
+  const tEnd = tStart + duration;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(Math.max(1, freqStart), tStart);
+  if (freqEnd && Math.abs(freqEnd - freqStart) > 0.01) {
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), tEnd);
+  }
+  gain.gain.setValueAtTime(0.0001, tStart);
+  gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, amp), tStart + Math.min(0.012, duration * 0.3));
+  gain.gain.exponentialRampToValueAtTime(0.0001, tEnd);
+  osc.connect(gain);
+  gain.connect(masterGain);
+  osc.onended = () => {
+    osc.disconnect();
+    gain.disconnect();
+  };
+  osc.start(tStart);
+  osc.stop(tEnd + 0.01);
+}
+
 function playSynth(name) {
   ensureAudioGraph();
   if (!audioCtx || !masterGain) return;
@@ -354,43 +403,27 @@ function playSynth(name) {
     }).catch(() => {});
     return;
   }
-  const t0 = audioCtx.currentTime;
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  osc.connect(gain);
-  gain.connect(masterGain);
   if (name === 'jump') {
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(420, t0);
-    osc.frequency.exponentialRampToValueAtTime(250, t0 + 0.11);
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
-    osc.start(t0);
-    osc.stop(t0 + 0.13);
+    scheduleTone('square', 560, 280, 0.0, 0.14, 0.11);
+    scheduleTone('triangle', 860, 430, 0.0, 0.11, 0.06);
   } else if (name === 'collect') {
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(620, t0);
-    osc.frequency.exponentialRampToValueAtTime(980, t0 + 0.09);
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.22, t0 + 0.008);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.11);
-    osc.start(t0);
-    osc.stop(t0 + 0.12);
+    scheduleTone('square', 1046, 1046, 0.0, 0.065, 0.11);
+    scheduleTone('triangle', 1318, 1318, 0.055, 0.09, 0.13);
   } else {
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(740, t0);
-    osc.frequency.setValueAtTime(980, t0 + 0.08);
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.2, t0 + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
-    osc.start(t0);
-    osc.stop(t0 + 0.22);
+    scheduleTone('square', 784, 784, 0.0, 0.12, 0.11);
+    scheduleTone('square', 988, 988, 0.08, 0.12, 0.11);
+    scheduleTone('triangle', 1174, 1174, 0.16, 0.14, 0.13);
+    scheduleTone('triangle', 1568, 1568, 0.28, 0.22, 0.12);
   }
 }
 
 function playSound(name) {
   if (!soundOn) return;
+  if (USE_SYNTH_SFX) {
+    if (!canPlayNow(name)) return;
+    playSynth(name);
+    return;
+  }
   if (!audioReady) {
     initAudio();
     if (!canPlayNow(name)) return;
@@ -421,12 +454,137 @@ function playSound(name) {
 function sfxJump() { playSound('jump'); }
 function sfxCollect() { playSound('collect'); }
 function sfxCelebrate() { playSound('celebrate'); }
-function startBgMusic() {}
-function stopBgMusic() {}
+
+function buildFallbackBgBuffer() {
+  ensureAudioGraph();
+  if (!audioCtx || bgBuffer) return;
+  const sampleRate = audioCtx.sampleRate;
+  const duration = 8;
+  const frameCount = Math.floor(sampleRate * duration);
+  const buffer = audioCtx.createBuffer(2, frameCount, sampleRate);
+  const left = buffer.getChannelData(0);
+  const right = buffer.getChannelData(1);
+  const chordRoots = [60, 57, 53, 55]; // C, Am, F, G
+  const arp = [0, 4, 7, 12, 7, 4, 2, 4];
+  const bassStep = [0, 0, 7, 0, 0, 0, 5, 0];
+  const stepSec = 0.25;
+  let noiseState = 2463534242 >>> 0;
+  let prevL = 0;
+  let prevR = 0;
+  for (let i = 0; i < frameCount; i++) {
+    const t = i / sampleRate;
+    const step = Math.floor(t / stepSec);
+    const chordIdx = Math.floor(step / 8) % chordRoots.length;
+    const stepInChord = step % 8;
+    const local = (t - step * stepSec) / stepSec;
+    const leadFreq = midiToFreq(chordRoots[chordIdx] + arp[stepInChord] + 12);
+    const bassFreq = midiToFreq(chordRoots[chordIdx] - 12 + bassStep[stepInChord]);
+    const padFreq = midiToFreq(chordRoots[chordIdx] + 7);
+    const envLead = Math.pow(1 - local, 1.8);
+    const envBass = Math.pow(1 - local, 2.4);
+    const lead = (pulseWave(leadFreq, t, 0.24) * 0.08 + pulseWave(leadFreq * 2, t, 0.14) * 0.025) * envLead;
+    const bass = triWave(bassFreq, t) * 0.07 * envBass;
+    const pad = Math.sin(2 * Math.PI * padFreq * t) * 0.02;
+    let hat = 0;
+    if ((step % 2) === 1 && local < 0.07) {
+      noiseState = (noiseState * 1664525 + 1013904223) >>> 0;
+      const noise = (noiseState / 4294967295) * 2 - 1;
+      hat = noise * (1 - local / 0.07) * 0.015;
+    }
+    let l = lead + bass + pad + hat;
+    let r = lead * 0.9 + bass * 1.05 + pad - hat * 0.55;
+    l = l * 0.86 + prevL * 0.14;
+    r = r * 0.86 + prevR * 0.14;
+    prevL = l;
+    prevR = r;
+    left[i] = Math.max(-1, Math.min(1, l));
+    right[i] = Math.max(-1, Math.min(1, r));
+  }
+  const crossfade = Math.min(2048, Math.floor(frameCount / 12));
+  for (let i = 0; i < crossfade; i++) {
+    const a = i / crossfade;
+    left[i] = left[i] * a + left[frameCount - crossfade + i] * (1 - a);
+    right[i] = right[i] * a + right[frameCount - crossfade + i] * (1 - a);
+  }
+  bgBuffer = buffer;
+}
+
+async function loadBgBuffer() {
+  if (bgBuffer) return bgBuffer;
+  if (bgLoading) return bgLoading;
+  bgLoading = (async () => {
+    ensureAudioGraph();
+    if (!audioCtx) return null;
+    try {
+      const res = await fetch(BGM_FILE, { cache: 'force-cache' });
+      if (res.ok) {
+        const arrayBuffer = await res.arrayBuffer();
+        const decoded = await decodeAudioCompat(audioCtx, arrayBuffer);
+        if (decoded) {
+          bgBuffer = decoded;
+          return bgBuffer;
+        }
+      }
+    } catch (_) {}
+    buildFallbackBgBuffer();
+    return bgBuffer;
+  })().finally(() => { bgLoading = null; });
+  return bgLoading;
+}
+
+function startBgMusic() {
+  if (!soundOn) return;
+  ensureAudioGraph();
+  if (!audioCtx || !masterGain) return;
+  if (typeof STATE !== 'undefined' && state !== STATE.PLAYING) return;
+  if (bgSource) return;
+  if (audioCtx.state !== 'running') {
+    audioCtx.resume().then(() => {
+      if (soundOn) startBgMusic();
+    }).catch(() => {});
+    return;
+  }
+  if (!bgBuffer) {
+    loadBgBuffer().then(() => {
+      if (soundOn) startBgMusic();
+    }).catch(() => {});
+    return;
+  }
+  const source = audioCtx.createBufferSource();
+  source.buffer = bgBuffer;
+  source.loop = true;
+  const gain = audioCtx.createGain();
+  gain.gain.value = 0.14;
+  source.connect(gain);
+  gain.connect(masterGain);
+  source.onended = () => {
+    if (bgSource === source) bgSource = null;
+  };
+  source.start(0);
+  bgSource = source;
+  bgGain = gain;
+}
+
+function stopBgMusic() {
+  if (bgSource) {
+    try { bgSource.stop(); } catch (_) {}
+    bgSource.disconnect();
+    bgSource = null;
+  }
+  if (bgGain) {
+    bgGain.disconnect();
+    bgGain = null;
+  }
+}
 
 function toggleSound() {
   soundOn = !soundOn;
-  if (soundOn) initAudio();
+  if (soundOn) {
+    initAudio();
+    if (typeof STATE !== 'undefined' && state === STATE.PLAYING) startBgMusic();
+  } else {
+    stopBgMusic();
+  }
   if (masterGain && audioCtx) {
     const target = soundOn ? 1 : 0;
     masterGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.01);
@@ -437,7 +595,9 @@ function toggleSound() {
 document.addEventListener('visibilitychange', () => {
   if (!soundOn || !audioCtx) return;
   if (document.visibilityState === 'visible' && audioCtx.state !== 'running') {
-    audioCtx.resume().catch(() => {});
+    audioCtx.resume().then(() => {
+      if (typeof STATE !== 'undefined' && state === STATE.PLAYING) startBgMusic();
+    }).catch(() => {});
   }
 });
 
