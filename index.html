@@ -252,7 +252,7 @@ canvas {
 </head>
 <body>
 <canvas id="game"></canvas>
-<button id="sound-btn" onclick="toggleSound()">🔇</button>
+<button id="sound-btn" onclick="toggleSound()">🔊</button>
 
 <div id="hud" class="hidden">
   <div id="heart-counter">HEARTS: 0</div>
@@ -276,36 +276,147 @@ canvas {
 </div>
 
 <script>
-// ============ AUDIO (opt-in, off by default) ============
-let soundOn = false;
+// ============ AUDIO (on by default) ============
+let soundOn = true;
 let audioReady = false;
-let pools = {};
+let audioCtx = null;
+let masterGain = null;
+let audioLoading = null;
+const audioBuffers = {};
+const lastPlayAt = { jump: 0, collect: 0, celebrate: 0 };
+const SFX_FILES = {
+  jump: 'sfx-jump.wav',
+  collect: 'sfx-collect.wav',
+  celebrate: 'sfx-celebrate.wav'
+};
+const SFX_MIN_GAP_MS = {
+  jump: 35,
+  collect: 45,
+  celebrate: 120
+};
 
-function initAudio() {
-  if (audioReady) return;
-  audioReady = true;
-  function makePool(src, count) {
-    const pool = [];
-    for (let i = 0; i < count; i++) { const a = new Audio(src); a.preload = 'auto'; pool.push(a); }
-    return pool;
-  }
-  pools = {
-    jump: makePool('sfx-jump.wav', 2),
-    collect: makePool('sfx-collect.wav', 2),
-    celebrate: makePool('sfx-celebrate.wav', 1)
-  };
-  // Unlock on iOS
-  Object.values(pools).flat().forEach(a => {
-    a.play().then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
+function decodeAudioCompat(ctx, arrayBuffer) {
+  return new Promise((resolve, reject) => {
+    const out = ctx.decodeAudioData(arrayBuffer, resolve, reject);
+    if (out && typeof out.then === 'function') out.then(resolve).catch(reject);
   });
 }
 
-const pidx = { jump: 0, collect: 0, celebrate: 0 };
+function ensureAudioGraph() {
+  if (audioCtx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  audioCtx = new AC({ latencyHint: 'interactive' });
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = soundOn ? 1 : 0;
+  masterGain.connect(audioCtx.destination);
+}
+
+async function initAudio() {
+  if (audioReady) return true;
+  if (audioLoading) return audioLoading;
+  audioLoading = (async () => {
+    ensureAudioGraph();
+    if (!audioCtx) return false;
+    try { if (audioCtx.state !== 'running') await audioCtx.resume(); } catch (_) {}
+    const entries = await Promise.all(Object.entries(SFX_FILES).map(async ([name, src]) => {
+      try {
+        const res = await fetch(src, { cache: 'force-cache' });
+        if (!res.ok) return [name, null];
+        const arrayBuffer = await res.arrayBuffer();
+        const buffer = await decodeAudioCompat(audioCtx, arrayBuffer);
+        return [name, buffer];
+      } catch (_) {
+        return [name, null];
+      }
+    }));
+    entries.forEach(([name, buffer]) => { audioBuffers[name] = buffer; });
+    audioReady = Object.values(audioBuffers).some(Boolean);
+    return audioReady;
+  })().finally(() => { audioLoading = null; });
+  return audioLoading;
+}
+
+function canPlayNow(name) {
+  const t = performance.now();
+  const minGap = SFX_MIN_GAP_MS[name] || 0;
+  if (t - (lastPlayAt[name] || 0) < minGap) return false;
+  lastPlayAt[name] = t;
+  return true;
+}
+
+function playSynth(name) {
+  ensureAudioGraph();
+  if (!audioCtx || !masterGain) return;
+  if (audioCtx.state !== 'running') {
+    audioCtx.resume().then(() => {
+      if (soundOn) playSynth(name);
+    }).catch(() => {});
+    return;
+  }
+  const t0 = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(masterGain);
+  if (name === 'jump') {
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(420, t0);
+    osc.frequency.exponentialRampToValueAtTime(250, t0 + 0.11);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+    osc.start(t0);
+    osc.stop(t0 + 0.13);
+  } else if (name === 'collect') {
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(620, t0);
+    osc.frequency.exponentialRampToValueAtTime(980, t0 + 0.09);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.22, t0 + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.11);
+    osc.start(t0);
+    osc.stop(t0 + 0.12);
+  } else {
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(740, t0);
+    osc.frequency.setValueAtTime(980, t0 + 0.08);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.2, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+    osc.start(t0);
+    osc.stop(t0 + 0.22);
+  }
+}
+
 function playSound(name) {
-  if (!soundOn || !audioReady || !pools[name]) return;
-  const p = pools[name];
-  const a = p[pidx[name] % p.length]; pidx[name]++;
-  a.currentTime = 0; a.play().catch(() => {});
+  if (!soundOn) return;
+  if (!audioReady) {
+    initAudio();
+    if (!canPlayNow(name)) return;
+    playSynth(name);
+    return;
+  }
+  const buffer = audioBuffers[name];
+  if (!buffer || !audioCtx || !masterGain) {
+    if (!canPlayNow(name)) return;
+    playSynth(name);
+    return;
+  }
+  if (audioCtx.state !== 'running') {
+    audioCtx.resume().then(() => {
+      if (soundOn) playSound(name);
+    }).catch(() => {});
+    return;
+  }
+  if (!canPlayNow(name)) return;
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  const gain = audioCtx.createGain();
+  gain.gain.value = name === 'celebrate' ? 0.9 : 0.75;
+  source.connect(gain);
+  gain.connect(masterGain);
+  source.start(0);
 }
 function sfxJump() { playSound('jump'); }
 function sfxCollect() { playSound('collect'); }
@@ -315,9 +426,22 @@ function stopBgMusic() {}
 
 function toggleSound() {
   soundOn = !soundOn;
-  if (soundOn && !audioReady) initAudio();
+  if (soundOn) initAudio();
+  if (masterGain && audioCtx) {
+    const target = soundOn ? 1 : 0;
+    masterGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.01);
+  }
   document.getElementById('sound-btn').textContent = soundOn ? '🔊' : '🔇';
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (!soundOn || !audioCtx) return;
+  if (document.visibilityState === 'visible' && audioCtx.state !== 'running') {
+    audioCtx.resume().catch(() => {});
+  }
+});
+
+if (soundOn) initAudio();
 
 // ============ CANVAS SETUP ============
 const canvas = document.getElementById('game');
@@ -755,7 +879,8 @@ function showEndScreen() {
 }
 
 document.getElementById('start-btn').addEventListener('click', () => {
-  // audio disabled for mobile performance
+  // Start gameplay; audio remains opt-in via sound toggle
+  if (soundOn) initAudio();
   document.getElementById('start-screen').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
   state = STATE.PLAYING;
