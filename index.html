@@ -239,20 +239,82 @@ canvas {
   z-index: 30;
   width: 40px;
   height: 40px;
-  border: none;
-  background: rgba(0,0,0,0.3);
-  border-radius: 8px;
-  font-size: 20px;
+  border: 2px solid #ffffff;
+  background: #ff6b9d;
+  box-shadow: 0 3px 0 #c0507a;
+  color: #ffffff;
   cursor: pointer;
-  line-height: 40px;
-  text-align: center;
   padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#sound-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+#sound-btn svg .speaker {
+  fill: #fff;
+}
+
+#sound-btn svg .wave {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2;
+  stroke-linecap: square;
+}
+
+#sound-btn svg .mute-slash {
+  display: none;
+  stroke: #fff;
+  stroke-width: 2.5;
+  stroke-linecap: square;
+}
+
+#sound-btn.is-off svg .wave {
+  opacity: 0;
+}
+
+#sound-btn.is-off svg .mute-slash {
+  display: block;
+}
+
+#sound-btn:active {
+  transform: translateY(3px);
+  box-shadow: none;
+}
+
+#maker-credit {
+  position: fixed;
+  right: 10px;
+  bottom: 8px;
+  z-index: 5;
+  pointer-events: none;
+  font-family: 'Press Start 2P', monospace;
+  font-size: clamp(7px, 1.9vw, 10px);
+  color: rgba(255, 245, 230, 0.9);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 3px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
 }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
-<button id="sound-btn" onclick="toggleSound()">🔊</button>
+<div id="maker-credit">crafted with love by Jayanth Putta</div>
+<button id="sound-btn" onclick="toggleSound()" aria-label="Sound on" title="Sound on">
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path class="speaker" d="M3 10v4h4l5 4V6l-5 4H3z"></path>
+    <path class="wave" d="M16 9c1.5 1 1.5 5 0 6"></path>
+    <path class="wave" d="M19 7c2.6 2 2.6 8 0 10"></path>
+    <line class="mute-slash" x1="4" y1="4" x2="20" y2="20"></line>
+  </svg>
+</button>
 
 <div id="hud" class="hidden">
   <div id="heart-counter">HEARTS: 0</div>
@@ -577,6 +639,15 @@ function stopBgMusic() {
   }
 }
 
+function updateSoundButton() {
+  const btn = document.getElementById('sound-btn');
+  if (!btn) return;
+  btn.classList.toggle('is-off', !soundOn);
+  const label = soundOn ? 'Sound on' : 'Sound off';
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+}
+
 function toggleSound() {
   soundOn = !soundOn;
   if (soundOn) {
@@ -589,7 +660,7 @@ function toggleSound() {
     const target = soundOn ? 1 : 0;
     masterGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.01);
   }
-  document.getElementById('sound-btn').textContent = soundOn ? '🔊' : '🔇';
+  updateSoundButton();
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -602,6 +673,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 if (soundOn) initAudio();
+updateSoundButton();
 
 // ============ CANVAS SETUP ============
 const canvas = document.getElementById('game');
