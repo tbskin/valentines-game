@@ -767,6 +767,8 @@ let state = STATE.START;
 let heartsCollected = 0;
 let totalHearts = 10;
 let gameTimer = 0;
+let ilaBackgroundUnlocked = false;
+let startSecretStep = 0;
 const GAME_DURATION = 5000;
 // Scale scroll distance to screen width so it feels right on both phone and desktop
 // Phone (~375px) -> ~750px, Desktop (~1400px) -> ~1200px
@@ -981,6 +983,37 @@ function drawBackground(dt) {
   });
 }
 
+function drawIlaBackgroundMessage() {
+  if (!ilaBackgroundUnlocked || state !== STATE.PLAYING) return;
+  const label = 'Ila <3';
+  const fontSize = Math.max(16, Math.min(36, Math.round(Math.min(W, H) * 0.07)));
+  const x = W * 0.5;
+  const y = H * 0.36;
+  const pulse = 0.85 + Math.sin(performance.now() * 0.0032) * 0.15;
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `${fontSize}px "Press Start 2P", monospace`;
+
+  const textW = ctx.measureText(label).width;
+  const boxW = textW + fontSize * 0.9;
+  const boxH = fontSize * 1.75;
+  ctx.globalAlpha = 0.42 * pulse;
+  ctx.fillStyle = '#ff6b9d';
+  roundRect(x - boxW / 2, y - boxH / 2, boxW, boxH, Math.max(7, fontSize * 0.22));
+
+  ctx.globalAlpha = 0.95;
+  ctx.shadowColor = 'rgba(255,107,157,0.6)';
+  ctx.shadowBlur = Math.max(4, Math.round(fontSize * 0.24));
+  ctx.lineWidth = Math.max(2, Math.round(fontSize * 0.14));
+  ctx.strokeStyle = 'rgba(140,40,80,0.95)';
+  ctx.strokeText(label, x, y);
+  ctx.fillStyle = '#fff7fd';
+  ctx.fillText(label, x, y);
+  ctx.restore();
+}
+
 function roundRect(x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -1101,6 +1134,7 @@ function render() {
   const playing = state === STATE.PLAYING || state === STATE.ENDING;
 
   drawBackground(1/60);
+  drawIlaBackgroundMessage();
   drawGround();
 
   if (playing) {
@@ -1161,6 +1195,43 @@ if (window.PointerEvent) {
 }
 
 // ============ SCREENS ============
+function bindPress(el, handler) {
+  if (!el) return;
+  if (window.PointerEvent) {
+    el.addEventListener('pointerdown', handler);
+  } else {
+    el.addEventListener('touchstart', handler, { passive: true });
+    el.addEventListener('mousedown', handler);
+  }
+}
+
+function resetStartSecret() {
+  startSecretStep = 0;
+}
+
+function advanceStartSecret(expectedStep) {
+  if (state !== STATE.START) return;
+  if (startSecretStep === expectedStep) {
+    startSecretStep++;
+  } else {
+    resetStartSecret();
+  }
+}
+
+const startScreen = document.getElementById('start-screen');
+const startTitle = startScreen.querySelector('h1');
+const startHint = startScreen.querySelector('p');
+
+bindPress(startTitle, (e) => {
+  if (e) e.preventDefault();
+  advanceStartSecret(0);
+});
+
+bindPress(startHint, (e) => {
+  if (e) e.preventDefault();
+  advanceStartSecret(1);
+});
+
 function showEndScreen() {
   state = STATE.END;
   stopBgMusic();
@@ -1173,6 +1244,8 @@ function showEndScreen() {
 
 document.getElementById('start-btn').addEventListener('click', (e) => {
   e.preventDefault();
+  ilaBackgroundUnlocked = startSecretStep === 2;
+  resetStartSecret();
   document.getElementById('start-screen').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
   state = STATE.PLAYING;
